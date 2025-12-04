@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture Controlled Particles</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        /* Hide the raw video feed, we only want the data */
+        #video-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #00ffcc;
+            font-family: 'Courier New', Courier, monospace;
+            z-index: 10;
+            pointer-events: none;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #loading {
+            font-weight: bold;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+    </style>
+
+    <!-- MediaPipe Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+
+    <div id="ui-layer">
+        <div id="loading">Initializing Neural Network...</div>
+        <div id="status" style="display:none;">System Active: Raise Hand</div>
+    </div>
+
+    <!-- Video element for computer vision -->
+    <video id="video-input"></video>
+
+    <!-- Three.js Import -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- PART 1: THREE.JS VISUALS ---
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.002);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 50;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Tracker Mesh (A small glowing ball that follows your hand)
+        const trackerGeo = new THREE.SphereGeometry(1, 16, 16);
+        const trackerMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.5 });
+        const handTracker = new THREE.Mesh(trackerGeo, trackerMat);
+        handTracker.visible = false; // Hidden until hand is found
+        scene.add(handTracker);
+
+        // Particle System
+        const particleCount = 8000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        const originalPositions = [];
+        const velocities = [];
+
+        const color1 = new THREE.Color(0x00ff88); // Matrix Green
+        const color2 = new THREE.Color(0x0088ff); // Cyber Blue
+
+        for (let i = 0; i < particleCount; i++) {
+            const x = (Math.random() - 0.5) * 120;
+            const y = (Math.random() - 0.5) * 70;
+            const z = (Math.random() - 0.5) * 50;
+
+            positions[i * 3] = x;
+            positions[i * 3 + 1] = y;
+            positions[i * 3 + 2] = z;
+
+            originalPositions.push({ x, y, z });
+            velocities.push({ x: 0, y: 0, z: 0 });
+
+            const mixedColor = color1.clone().lerp(color2, (x + 60) / 120);
+            colors[i * 3] = mixedColor.r;
+            colors[i * 3 + 1] = mixedColor.g;
+            colors[i * 3 + 2] = mixedColor.b;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        // Generate texture programmatically
+        const canvas = document.createElement('canvas');
+        canvas.width = 32; canvas.height = 32;
+        const context = canvas.getContext('2d');
+        const gradient = context.createRadialGradient(16, 16, 0, 16, 16, 16);
+        gradient.addColorStop(0, 'rgba(255,255,255,1)');
+        gradient.addColorStop(1, 'rgba(255,255,255,0)');
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, 32, 32);
+        const texture = new THREE.Texture(canvas);
+        texture.needsUpdate = true;
+
+        const material = new THREE.PointsMaterial({
+            size: 0.6,
+            map: texture,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        const particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+
+        // --- PART 2: MEDIAPIPE COMPUTER VISION ---
+
+        const videoElement = document.getElementById('video-input');
+        const loadingEl = document.getElementById('loading');
+        const statusEl = document.getElementById('status');
+
+        // This variable stores the current hand position in 3D space
+        // We initialize it far away so particles aren't disturbed at start
+        let targetPosition = new THREE.Vector3(999, 999, 0);
+        let handDetected = false;
+
+        function onResults(results) {
+            loadingEl.style.display = 'none';
+            statusEl.style.display = 'block';
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                handDetected = true;
+
+                // Get the first hand detected
+                const hand = results.multiHandLandmarks[0];
+
+                // Landmark 8 is the tip of the Index Finger
+                const indexTip = hand[8];
+
+                // MAP 2D VIDEO COORDINATES TO 3D WORLD COORDINATES
+                // MediaPipe gives x,y is 0.0 to 1.0
+                // Three.js world is approx -60 to +60 in X, -35 to +35 in Y (depending on Z depth)
+
+                // Note: We flip X (1 - x) because webcam view is mirrored
+                const x = (1 - indexTip.x) * 120 - 60;
+                const y = (1 - indexTip.y) * 70 - 35;
+
+                // Lerp (smooth) the movement of the target
+                targetPosition.x += (x - targetPosition.x) * 0.2;
+                targetPosition.y += (y - targetPosition.y) * 0.2;
+                targetPosition.z = 0;
+
+                // Update visual marker
+                handTracker.position.copy(targetPosition);
+                handTracker.visible = true;
+            } else {
+                handDetected = false;
+                handTracker.visible = false;
+                // If hand leaves, move target away gently
+                targetPosition.lerp(new THREE.Vector3(999, 999, 0), 0.05);
+            }
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        const cameraFeed = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 1280,
+            height: 720
+        });
+        cameraFeed.start();
+
+
+        // --- PART 3: PHYSICS & ANIMATION LOOP ---
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            const positionsArr = geometry.attributes.position;
+
+            for (let i = 0; i < particleCount; i++) {
+                const px = positionsArr.getX(i);
+                const py = positionsArr.getY(i);
+                const pz = positionsArr.getZ(i);
+
+                const ox = originalPositions[i].x;
+                const oy = originalPositions[i].y;
+                const oz = originalPositions[i].z;
+
+                // 1. Ambient Movement (Floating)
+                const waveX = Math.sin(time * 0.5 + oy * 0.1) * 0.2;
+                const waveY = Math.cos(time * 0.3 + ox * 0.1) * 0.2;
+
+                // 2. Hand Repulsion Physics
+                let dx = targetPosition.x - px;
+                let dy = targetPosition.y - py;
+                let dz = targetPosition.z - pz;
+
+                const distSq = dx * dx + dy * dy + dz * dz;
+
+                // If hand is detected and close
+                if (distSq < 1500) {
+                    const force = 1500 / (distSq + 1); // Inverse square law roughly
+                    const angle = Math.atan2(dy, dx);
+
+                    // Push away
+                    velocities[i].x -= dx * 0.005;
+                    velocities[i].y -= dy * 0.005;
+                    velocities[i].z -= dz * 0.005;
+                }
+
+                // 3. Return Home (Spring)
+                velocities[i].x += (ox + waveX - px) * 0.02;
+                velocities[i].y += (oy + waveY - py) * 0.02;
+                velocities[i].z += (oz - pz) * 0.02;
+
+                // 4. Friction
+                velocities[i].x *= 0.90;
+                velocities[i].y *= 0.90;
+                velocities[i].z *= 0.90;
+
+                // Update
+                positionsArr.setX(i, px + velocities[i].x);
+                positionsArr.setY(i, py + velocities[i].y);
+                positionsArr.setZ(i, pz + velocities[i].z);
+            }
+
+            positionsArr.needsUpdate = true;
+            particles.rotation.y = time * 0.02; // Subtle camera rotation
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+
+</html>
