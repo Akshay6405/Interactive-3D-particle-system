@@ -1,8 +1,8 @@
-Interactive 3D Particles with Hand Tracking
+# Interactive 3D Particles with Hand Tracking
 
 A real-time, browser-based visualizer that combines Three.js 3D rendering with Google MediaPipe computer vision. This project creates a field of thousands of floating particles that react physically to your hand movements via your webcam.
 
-🌟 Features
+# 🌟 Features
 Computer Vision Control: Uses the webcam to track your hand in real-time. No mouse or touch required.
 High Performance: Renders 8,000+ individual particles using THREE.BufferGeometry for 60FPS performance on modern devices.
 Physics Engine: Custom lightweight physics simulating repulsion forces, spring tension (return-to-home), friction, and sine-wave floating.
@@ -10,7 +10,7 @@ Procedural Assets: Textures are generated programmatically via HTML5 Canvas (no 
 Zero Install: Runs entirely in the browser using ES Modules and CDNs.
 
 
-🚀 Getting Started
+# 🚀 Getting Started
 Prerequisites
 Because this project requires access to your Webcam, modern browsers (Chrome, Firefox, Safari) enforce security restrictions that prevent it from running directly from your hard drive (e.g., file:///C:/Users/...).
 You must run this file through a local web server (localhost) or HTTPS.
@@ -26,7 +26,7 @@ Method B: Python
 Open your terminal/command prompt in the folder containing the file and run:
 code
 Bash
-# Python 3
+ Python 3
 python -m http.server 8000
 Then open http://localhost:8000 in your browser.
 Method C: Node.js
@@ -37,7 +37,7 @@ Allow Permissions:
 When the page loads, your browser will ask for permission to use the Camera. Click Allow.
 
 
-🎮 How to Interact
+# 🎮 How to Interact
 Wait for the text "System Active: Raise Hand" to appear.
 Raise your hand in front of the camera.
 A small red marker will appear, tracking your index finger.
@@ -45,7 +45,7 @@ Move your hand through the particle cloud to push the particles away.
 Remove your hand from the frame, and the particles will slowly float back to their original positions.
 
 
-🛠️ Configuration
+# 🛠️ Configuration
 You can tweak the behavior of the system by modifying the constants at the top of the script in index.html:
 code
 
@@ -62,7 +62,7 @@ const color2 = new THREE.Color(0x0088ff); // End color
 const force = 1500 / (distSq + 1);
 
 
-🧠 Technical Details
+# 🧠 Technical Details
 Initialization: The script sets up a Three.js scene and creates a buffer of positions/velocities.
 Vision Loop: MediaPipe analyzes the video feed frame-by-frame. It extracts the X/Y coordinates of landmark #8 (Index Finger Tip).
 Mapping: The 2D video coordinates (0.0 to 1.0) are mapped to the 3D world coordinates (approx -60 to +60).
@@ -73,7 +73,7 @@ Applies a spring force to pull the particle back to its origin.
 Updates the GPU buffer.
 
 
-📄 License
+# 📄 License
 This project is open-source. Feel free to modify and use it for your own creative coding experiments.
 Troubleshooting:
 Black Screen? Ensure you allowed camera access.
